@@ -6,7 +6,7 @@ import MATER_306
 from pathlib import Path
 from typing import Tuple, List, Dict, Any
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import os
 import json
 
@@ -211,7 +211,7 @@ def trace_global(axes_corr: List[plt.Axes], labels: List[str], x_efforts: List[f
     ax.set_ylabel("Modèle (mm)")
     ax.grid(True)
 
-def faire_tableau_recap(labels: List[str], x_efforts: List[float], y_efforts: List[float], x_disp: List[float], y_disp: List[float], save: bool = True) -> None:
+def faire_tableau_recap(labels: List[str], x_efforts: List[float], y_efforts: List[float], x_disp: List[float], y_disp: List[float], save: bool = True) -> plt.Figure:
     # ---------------------------------------------------------
     # 9) Tableaux récapitulatifs du bilan des ecarts essais/modèles
     # ---------------------------------------------------------
@@ -245,7 +245,7 @@ def faire_tableau_recap(labels: List[str], x_efforts: List[float], y_efforts: Li
     df_depl = df_depl.round(2)
 
     # --- AFFICHAGE DES 2 TABLEAUX CÔTE À CÔTÉ ---
-    fig, axs = plt.subplots(1, 2, figsize=(16, 2))
+    fig, axs = plt.subplots(1, 2, num=8, clear=True, figsize=(16, 2))
     titles = ["Bilan sur les efforts max", "Bilan sur les déplacements max"]
     dataframes = [df_efforts, df_depl]
 
@@ -292,9 +292,9 @@ def faire_tableau_recap(labels: List[str], x_efforts: List[float], y_efforts: Li
         output_dir.mkdir(exist_ok=True)
         fig.savefig(output_dir / "bilan_essais_simu.png", dpi=300, bbox_inches='tight')
     
-    fig.show()
+    return fig
 
-def plot_polar_failure_criteria(tension_force: float, shear_force: float, mixed_force: float, save: bool = True) -> None:
+def plot_polar_failure_criteria(tension_force: float, shear_force: float, mixed_force: float, save: bool = True) -> plt.Figure:
     # Ordonner les valeurs par angle : 0° (Tension), 45° (Mixed), 90° (Shear)
     angles_deg = np.array([0, 45, 90])
     angles_rad = np.deg2rad(angles_deg)
@@ -312,7 +312,7 @@ def plot_polar_failure_criteria(tension_force: float, shear_force: float, mixed_
     output_dir.mkdir(exist_ok=True)
 
     # --- Graph 1 : Cercle de Mohr classique sur fond coloré ---
-    fig1 = plt.figure(figsize=(7, 6))
+    fig1 = plt.figure(num=6, clear=True, figsize=(7, 6))
     ax1 = fig1.add_subplot(111, projection='polar')
     ax1.set_thetamin(0)
     ax1.set_thetamax(90)
@@ -334,65 +334,87 @@ def plot_polar_failure_criteria(tension_force: float, shear_force: float, mixed_
     ax1.set_title("Critère de rupture basé sur les essais (0-45-90)°\n", weight='bold')
     ax1.legend(loc="upper right")
 
-    # --- Graph 2 : Graphique polaire simple ---
-    fig2 = plt.figure(figsize=(6, 6))
-    ax2 = fig2.add_subplot(111, projection='polar')
-    ax2.set_thetamin(0)
-    ax2.set_thetamax(90)
-    
-    angles_ticks = [0, 15, 30, 45, 60, 75, 90]
-    ax2.set_thetagrids(angles_ticks, labels=["Tension (0°)", "15°", "30°", "45°", "60°", "75°", "Cisaillement (90°)"])
-    
-    ax2.plot(theta, sigma_polaire, color="blue", linestyle="--", label="Critère de Mohr")
-    ax2.plot(theta, efforts_interp, label="Critère de rupture (exemple)")
-    ax2.scatter(angles_rad, efforts, color='red', zorder=5)
-    
-    for ang, eff in zip(angles_deg, efforts):
-        ax2.text(np.deg2rad(ang), eff - max(efforts)*0.08, f"{eff} N", ha='center')
-        
-    ax2.set_title("Critère de rupture basé sur les essais (0-45-90)°\n", weight='bold')
-    ax2.grid(True)
-    ax2.legend()
-    
     fig1.tight_layout()
-    fig2.tight_layout()
-    
     if save:
         fig1.savefig(output_dir / "mohr_colore.png", dpi=300, bbox_inches='tight')
-        fig2.savefig(output_dir / "mohr_simple.png", dpi=300, bbox_inches='tight')
+    return fig1
+
+
+def read_experiments(file_tens: str, file_shear: str, file_mixed: str):
+    """Read all three tests without evaluating any model parameters."""
+    data = {}
+    for name, filename in zip(essais, (file_tens, file_shear, file_mixed)):
+        path = Path(filename)
+        if not filename or not path.is_file():
+            raise ValueError(f"Fichier d'essai introuvable : {filename}")
+        factor = recup_unites(path)
+        frame = load_essai_data(path)
+        values = frame.iloc[:, [COL_DISP_IDX, COL_FORCE_IDX]].to_numpy(dtype=float)
+        if not len(values) or not np.isfinite(values).all():
+            raise ValueError(f"Données d'essai vides ou invalides : {filename}")
+        data[name] = (frame, factor)
+    return data
+
+
+def experimental_analysis(file_tens: str, file_shear: str, file_mixed: str,
+                          save_outputs: bool = True, embedded: bool = False):
+    """Create only the raw curves, peak table and experimental polar plot."""
+    plt.close('all')
+    try:
+        data = read_experiments(file_tens, file_shear, file_mixed)
+        fig_raw, ax = plt.subplots(num=1, clear=True)
+        fig_max, ax_table = plt.subplots(num=2, clear=True, figsize=(6, 3))
+        peaks = {}
+        cells = []
+        for name, (frame, factor) in data.items():
+            meta = essais[name]
+            ajoute_essai(frame, meta['nom_essai'], factor, ax)
+            peaks[name] = max(frame.iloc[:, COL_FORCE_IDX] * factor)
+            cells.append([meta['nom_essai'], round(peaks[name])])
+        ax.set(title="Courbes d'essai de traction", xlabel="Déplacement (mm)", ylabel="Effort (N)")
+        ax.legend()
+        ax.grid(True)
+        ax_table.axis('off')
+        ax_table.set_title("Tenue mécanique en N")
+        table = ax_table.table(cellText=cells, colLabels=["Essai", "Tenue mécanique (N)"],
+                               loc='center', cellLoc='center')
+        table.auto_set_font_size(False)
+        table.set_fontsize(11)
+        table.scale(1, 2.2)
+        fig_raw.tight_layout()
+        fig_max.tight_layout()
+        fig_polar = plot_polar_failure_criteria(peaks['tension'], peaks['shear'], peaks['mixed'], save=save_outputs)
+        if save_outputs:
+            output = Path('output')
+            output.mkdir(exist_ok=True)
+            fig_raw.savefig(output / 'courbes_essais.png', dpi=300, bbox_inches='tight')
+            fig_max.savefig(output / 'tableau_rivet_bleu.png', dpi=300, bbox_inches='tight')
+        figures = [fig_raw, fig_max, fig_polar]
+        if embedded:
+            for fig in figures:
+                plt.close(fig)
+        else:
+            plt.show(block=False)
+        return figures
+    except Exception:
+        plt.close('all')
+        raise
+
 
 def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = True, preview_mode: bool = False):
     # Fermer les anciennes fenêtres avant de commencer
     plt.close('all')
     
-    # Overwrite the global configs dynamically
-    essais["tension"]["filename"] = file_tens
-    essais["shear"]["filename"] = file_shear
-    essais["mixed"]["filename"] = file_mixed
+    data = read_experiments(file_tens, file_shear, file_mixed)
 
-    if not preview_mode:
-        fig_essais, axe_essais = plt.subplots() # Subplots basique des essais
-        # --- Tableau des max ---
-        fig_max, axe_tableau = plt.subplots(figsize=(5, 2))
-        # Préférences
-        header_color = "#4A90E2"
-        cell_color = "#C0D7F5"
-        cell_colors = [[cell_color, cell_color] for i in range(3)]
-        # En-têtes
-        headers = ["Essai", "Tenue mécanique\n(en N)"]
-        cells = []
-    
     fig_width = 10 if preview_mode else 18
     fig_height = 3 if preview_mode else 5
-    fig_comp, (ax_tens, ax_shear, ax_mixed) = plt.subplots(1, 3, figsize=(fig_width, fig_height))
+    fig_comp, (ax_tens, ax_shear, ax_mixed) = plt.subplots(1, 3, num=4, clear=True, figsize=(fig_width, fig_height))
     
     if not preview_mode:
-        fig_corr, axes_corr = plt.subplots(1, 3, figsize=(18, 5)) # Subplots corrélation efforts + déplacements
+        fig_corr, axes_corr = plt.subplots(1, 3, num=5, clear=True, figsize=(18, 5)) # Subplots corrélation efforts + déplacements
 
-    # Assign dynamically instantiated axes to the global configuration dictionary
-    essais["tension"]["axe"] = ax_tens
-    essais["shear"]["axe"] = ax_shear
-    essais["mixed"]["axe"] = ax_mixed
+    comparison_axes = dict(zip(essais, (ax_tens, ax_shear, ax_mixed)))
 
     labels_list: List[str] = []
     x_efforts_list: List[float] = []
@@ -401,37 +423,16 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
     y_disp_list: List[float] = []
 
     for name, essai_meta in essais.items():
-        file_path = Path(essai_meta["filename"])
-
-        if not file_path.exists():
-            print(f"[ERROR] Le fichier {file_path} est introuvable. Ignoré.")
-            continue
-
+        df_essai, facteur = data[name]
         try:
-            # 1. Calcul facteur depuis les untiés
-            facteur = recup_unites(file_path)
-    
-            # 2. Extract Dataframe une seule fois pour tout l'itération
-            df_essai = load_essai_data(file_path)
-    
-            # 3. Simulation MAT306 (Compensation inverse `90 - angle` requise par la config externe)
             simulation = MATER_306.compute_response(90 - essai_meta["angle"], PARAMETERS_MAT306)
-    
-            if not preview_mode:
-                # Tracé des essais seuls
-                ajoute_essai(df_essai, essai_meta["nom_essai"], facteur, axe_essais)
-        
-                # Faire tableau bleu
-                max_effort = round(max(df_essai.iloc[:, COL_FORCE_IDX] * facteur))
-                row = [f"{essai_meta['nom_essai']} ({essai_meta['angle']}°)", max_effort]
-                cells.append(row)
-    
+
             # Tracé des essais et du MAT306 dans le fig_comp
             f_max_essai, d_max_essai, f_max_simu, d_max_simu = trace_essais_comp(
                 df_essai,
                 essai_meta["nom_essai"],
                 facteur,
-                essai_meta["axe"],
+                comparison_axes[name],
                 simulation,
                 essai_meta["nom_mat_cols"]
             )
@@ -457,7 +458,8 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
                 y_disp_list.append(d_max_simu)
 
         except Exception as e:
-            print(f"[ERROR] Problème rencontré lors du traitement de {file_path}: {e}")
+            plt.close("all")
+            raise RuntimeError(f"Simulation impossible pour {essai_meta['nom_essai']} : {e}") from e
 
     # S'il y a des données valides, on plot
     if not labels_list and not preview_mode:
@@ -469,46 +471,6 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
         trace_global(axes_corr, labels_list, x_efforts_list, y_efforts_list, x_disp_list, y_disp_list)
         faire_tableau_recap(labels_list, x_efforts_list, y_efforts_list, x_disp_list, y_disp_list, save=save_outputs)
     
-        # Styling and saving
-        axe_essais.set_xlabel('Déplacement (mm)')
-        axe_essais.set_ylabel("Effort (N)")
-        axe_essais.set_title("Courbes d'essai de traction")
-        axe_essais.legend()
-    
-        axe_tableau.set_axis_off()
-        main_table = axe_tableau.table(
-            cellText=cells, 
-            colLabels=headers,
-            loc="center",
-            cellLoc="center"
-        )
-        main_table.auto_set_font_size(False)
-        main_table.set_fontsize(11)
-        main_table.scale(1.2, 2.2)
-    
-        for (r, c), cell in main_table.get_celld().items():
-            cell.set_edgecolor('#E0E0E0')
-            if r == 0:
-                cell.set_text_props(weight='bold', color='white')
-                cell.set_facecolor('#3A6996') # Medium-light elegant blue
-                
-                # Increase precisely the header cell's size/height
-                current_height = cell.get_height()
-                if current_height is not None:
-                    cell.set_height(current_height * 1.5)
-            else:
-                cell.set_facecolor('#F8F9FA' if r % 2 == 0 else '#FFFFFF')
-
-    if save_outputs:
-        try:
-            output_dir = Path("output")
-            output_dir.mkdir(exist_ok=True)
-            fig_max.savefig(output_dir / "tableau_rivet_bleu.png", dpi=300, bbox_inches='tight')
-            fig_essais.savefig(output_dir / "courbes_essais.png", dpi=300, bbox_inches='tight')
-            fig_comp.savefig(output_dir / "comparaison_matis.png", dpi=300, bbox_inches='tight')
-        except Exception as e:
-            print(f"[WARNING] Impossible de sauvegarder les images : {e}")
-
     fig_comp.tight_layout()
     for ax in (ax_tens, ax_shear, ax_mixed):
         ax.legend()
@@ -523,17 +485,9 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
     
         fig_corr.tight_layout()
         
-        # Intégration des graphiques polaires Mohr
-        # Based on the user data structure, index 0=Tension, 1=Shear, 2=Mixed
-        plot_polar_failure_criteria(
-            tension_force=x_efforts_list[0], 
-            shear_force=x_efforts_list[1], 
-            mixed_force=x_efforts_list[2],
-            save=save_outputs
-        )
-        
         if save_outputs:
             fig_corr.savefig(Path("output") / "correlation_efforts.png", dpi=300, bbox_inches='tight')
+            fig_comp.savefig(Path("output") / "comparaison_matis.png", dpi=300, bbox_inches='tight')
         
         # --- Nouveau : Tableau des paramètres de simulation ---
         # On retire h_ms pour le tableau horizontal du rapport
@@ -543,7 +497,7 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
         
         # Adaptation de figsize au nombre de colonnes
         width = len(p_headers)
-        fig_params, ax_p = plt.subplots(figsize=(width, 2))
+        fig_params, ax_p = plt.subplots(num=3, clear=True, figsize=(width, 2))
         ax_p.axis('off')
         
         p_table = ax_p.table(
@@ -572,8 +526,9 @@ def main(file_tens: str, file_shear: str, file_mixed: str, save_outputs: bool = 
             fig_params.savefig(Path("output") / "parametres_simulation.png", dpi=300, bbox_inches='tight')
 
     if not preview_mode:
-        plt.show()
+        plt.show(block=False)
     else:
+        plt.close(fig_comp)
         return fig_comp
 
 def launch_gui(initial_paths: Dict[str, str]):
@@ -595,7 +550,7 @@ def launch_gui(initial_paths: Dict[str, str]):
     entry_widgets = {}
     
     # Frame pour l'aperçu des graphes (non affiché par défaut)
-    preview_frame = tk.LabelFrame(root, text=" 3. Aperçu des Graphes (Essais vs Modèle) ", padx=10, pady=10, fg="#3A6996", font=("Helvetica", 10, "bold"))
+    preview_frame = tk.LabelFrame(root, text=" 3. Aperçu des Graphes ", padx=10, pady=10, fg="#3A6996", font=("Helvetica", 10, "bold"))
 
     def select_file(test_type, label):
         filename = filedialog.askopenfilename(
@@ -606,49 +561,78 @@ def launch_gui(initial_paths: Dict[str, str]):
             paths[test_type] = filename
             label.config(text=Path(filename).name, fg="#2C3E50")
 
-    def run_analysis(save_files=True):
-        if not all(paths.values()):
-            messagebox.showerror("Erreur de sélection", "Veuillez sélectionner un fichier pour CHACUN des 3 essais (Tension, Cisaillement, Mixte) avant de lancer.")
-            return
+    embedded_canvases = []
 
-        # Récupération et validation des paramètres MAT306
-        try:
-            for key in PARAMETERS_MAT306:
-                val = entry_widgets[key].get().replace(',', '.')
-                PARAMETERS_MAT306[key] = float(val)
-        except ValueError:
-            messagebox.showerror("Erreur de saisie", f"Paramètre invalide pour '{key}'. Veuillez entrer un nombre valide.")
+    def clear_display():
+        for canvas in embedded_canvases:
+            canvas.get_tk_widget().destroy()
+            plt.close(canvas.figure)
+        embedded_canvases.clear()
+        for widget in preview_frame.winfo_children():
+            widget.destroy()
+        preview_frame.pack_forget()
+        plt.close('all')
+
+    def embed_figures(figures, titles):
+        notebook = ttk.Notebook(preview_frame)
+        notebook.pack(fill='both', expand=True)
+        for fig, title in zip(figures, titles):
+            tab = ttk.Frame(notebook)
+            notebook.add(tab, text=title)
+            canvas = FigureCanvasTkAgg(fig, master=tab)
+            embedded_canvases.append(canvas)
+            canvas.draw()
+            canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        preview_frame.pack(fill='both', expand=True, padx=20, pady=10)
+
+    def validate_paths():
+        if not all(paths.get(name) for name in essais):
+            messagebox.showerror("Erreur de sélection", "Veuillez sélectionner les 3 fichiers d'essai.")
+            return False
+        return True
+
+    def run_experiments(embedded=False):
+        if not validate_paths():
             return
-            
-        # Sauvegarder les paramètres et les chemins pour la prochaine fois (uniquement en mode complet)
+        clear_display()
+        try:
+            save_config(PARAMETERS_MAT306, paths)
+            figures = experimental_analysis(paths['tension'], paths['shear'], paths['mixed'],
+                                            save_outputs=not embedded, embedded=embedded)
+            if embedded:
+                embed_figures(figures, ["Courbes d'essai", "Tenue mécanique", "Critère de rupture"])
+        except Exception as exc:
+            clear_display()
+            messagebox.showerror("Erreur des essais", str(exc))
+
+    def run_analysis(save_files=True):
+        if not validate_paths():
+            return
+        try:
+            params = {key: float(entry_widgets[key].get().replace(',', '.')) for key in PARAMETERS_MAT306}
+            if not all(np.isfinite(value) for value in params.values()):
+                raise ValueError("Les paramètres doivent être des nombres finis.")
+        except ValueError as exc:
+            messagebox.showerror("Erreur de saisie", f"Paramètre MAT306 invalide : {exc}")
+            return
+        PARAMETERS_MAT306.update(params)
         if save_files:
             save_config(PARAMETERS_MAT306, paths)
-
-        # Si on lance l'analyse complète, masquer l'aperçu avant d'appeler main (qui bloque)
-        if save_files:
-            try:
-                if preview_frame.winfo_exists():
-                    preview_frame.pack_forget()
-            except Exception:
-                pass
-
-        # Lancer l'analyse (mode preview si save_files est False)
-        fig = main(paths["tension"], paths["shear"], paths["mixed"], save_outputs=save_files, preview_mode=not save_files)
-
-        # Si on est en mode preview et que la fenêtre Tkinter existe encore
+        clear_display()
         try:
-            if not save_files and fig is not None and preview_frame.winfo_exists():
-                # Nettoyer les anciens widgets de l'aperçu
-                for widget in preview_frame.winfo_children():
-                    widget.destroy()
-                
-                # Intégrer la figure matplotlib
-                canvas = FigureCanvasTkAgg(fig, master=preview_frame)
-                canvas.draw()
-                canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-                preview_frame.pack(fill="both", expand=True, padx=20, pady=10)
-        except Exception:
-            pass
+            fig = main(paths['tension'], paths['shear'], paths['mixed'],
+                       save_outputs=save_files, preview_mode=not save_files)
+            if not save_files:
+                embed_figures([fig], ["Essais vs Modèle"])
+        except Exception as exc:
+            clear_display()
+            messagebox.showerror("Erreur de simulation", str(exc))
+
+    def close_window():
+        clear_display()
+        root.destroy()
+
+    root.protocol('WM_DELETE_WINDOW', close_window)
 
     # --- Section Sélection des Fichiers ---
     files_frame = tk.LabelFrame(root, text=" 1. Sélection des Fichiers d'Essai ", padx=10, pady=10, fg="#3A6996", font=("Helvetica", 10, "bold"))
@@ -680,6 +664,14 @@ def launch_gui(initial_paths: Dict[str, str]):
     lbl_mixed = tk.Label(files_frame, text=txt_mixed, width=45, bg="#ecf0f1", anchor='w', fg=fg_mixed)
     lbl_mixed.grid(row=2, column=1, padx=10, pady=5)
     tk.Button(files_frame, text="Parcourir", command=lambda: select_file("mixed", lbl_mixed), bg="#bdc3c7").grid(row=2, column=2)
+
+    files_actions = tk.Frame(files_frame)
+    files_actions.grid(row=0, column=3, rowspan=3, sticky='e', padx=(20, 0))
+    files_frame.columnconfigure(3, weight=1)
+    tk.Button(files_actions, text="Aperçu des Essais", command=lambda: run_experiments(embedded=True),
+              bg="#607D8B", fg="white", width=20).pack(pady=5)
+    tk.Button(files_actions, text="Afficher les Essais", command=run_experiments,
+              bg="#4A90E2", fg="white", width=20).pack(pady=5)
 
     # --- Section Paramètres MAT306 ---
     params_frame = tk.LabelFrame(root, text=" 2. Paramètres MAT306 ", padx=10, pady=10, fg="#3A6996", font=("Helvetica", 10, "bold"))
@@ -713,14 +705,15 @@ def launch_gui(initial_paths: Dict[str, str]):
     add_param(params_frame, 4, 4, "h_ms:", "h_ms")
 
     # Buttons
-    btn_frame = tk.Frame(root)
-    btn_frame.pack(pady=20)
+    btn_frame = tk.Frame(params_frame)
+    btn_frame.grid(row=0, column=6, rowspan=5, sticky='e', padx=(20, 0))
+    params_frame.columnconfigure(6, weight=1)
 
     btn_preview = tk.Button(btn_frame, text="Aperçu Rapide", font=("Helvetica", 12, "bold"), bg="#607D8B", fg="white", command=lambda: run_analysis(save_files=False), height=2, width=15)
-    btn_preview.pack(side="left", padx=10)
+    btn_preview.pack(pady=5, fill="x")
 
     btn_run = tk.Button(btn_frame, text="Lancer l'Analyse", font=("Helvetica", 12, "bold"), bg="#4A90E2", fg="white", command=lambda: run_analysis(save_files=True), height=2, width=20)
-    btn_run.pack(side="left", padx=10)
+    btn_run.pack(pady=5, fill="x")
 
     root.mainloop()
 

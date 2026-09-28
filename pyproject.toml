@@ -1,0 +1,20 @@
+[project]
+name = "analyse306"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Dimitri FAJAL", email = "dimitri.faj@orange.fr" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "matplotlib>=3.11.2",
+    "pandas>=3.0.6",
+]
+
+[project.scripts]
+analyse306 = "analyse306:main"
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
